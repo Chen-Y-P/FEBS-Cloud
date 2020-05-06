@@ -1,17 +1,19 @@
 package cc.mrbird.febs.server.system.controller;
 
-import cc.mrbird.febs.common.annotation.ControllerEndpoint;
-import cc.mrbird.febs.common.entity.FebsResponse;
-import cc.mrbird.febs.common.entity.QueryRequest;
-import cc.mrbird.febs.common.entity.system.LoginLog;
-import cc.mrbird.febs.common.entity.system.SystemUser;
-import cc.mrbird.febs.common.utils.FebsUtil;
+import cc.mrbird.febs.common.core.entity.FebsResponse;
+import cc.mrbird.febs.common.core.entity.QueryRequest;
+import cc.mrbird.febs.common.core.entity.system.LoginLog;
+import cc.mrbird.febs.common.core.entity.system.SystemUser;
+import cc.mrbird.febs.common.core.exception.FebsException;
+import cc.mrbird.febs.common.core.utils.FebsUtil;
+import cc.mrbird.febs.server.system.annotation.ControllerEndpoint;
 import cc.mrbird.febs.server.system.service.ILoginLogService;
+import cc.mrbird.febs.server.system.service.IUserDataPermissionService;
 import cc.mrbird.febs.server.system.service.IUserService;
 import com.baomidou.mybatisplus.core.toolkit.StringPool;
 import com.wuwenze.poi.ExcelKit;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.validation.annotation.Validated;
@@ -31,30 +33,30 @@ import java.util.Map;
 @Slf4j
 @Validated
 @RestController
+@RequiredArgsConstructor
 @RequestMapping("user")
 public class UserController {
 
-    @Autowired
-    private IUserService userService;
-    @Autowired
-    private ILoginLogService loginLogService;
-    @Autowired
-    private PasswordEncoder passwordEncoder;
+    private final IUserService userService;
+    private final IUserDataPermissionService userDataPermissionService;
+    private final ILoginLogService loginLogService;
+    private final PasswordEncoder passwordEncoder;
 
-    @GetMapping("success/{username}")
-    public void loginSuccess(@NotBlank(message = "{required}") @PathVariable String username, HttpServletRequest request) {
+    @GetMapping("success")
+    public void loginSuccess(HttpServletRequest request) {
+        String currentUsername = FebsUtil.getCurrentUsername();
         // update last login time
-        this.userService.updateLoginTime(username);
+        this.userService.updateLoginTime(currentUsername);
         // save login log
         LoginLog loginLog = new LoginLog();
-        loginLog.setUsername(username);
+        loginLog.setUsername(currentUsername);
         loginLog.setSystemBrowserInfo(request.getHeader("user-agent"));
         this.loginLogService.saveLoginLog(loginLog);
     }
 
-    @GetMapping("index/{username}")
-    public FebsResponse index(@NotBlank(message = "{required}") @PathVariable String username) {
-        Map<String, Object> data = new HashMap<>();
+    @GetMapping("index")
+    public FebsResponse index() {
+        Map<String, Object> data = new HashMap<>(5);
         // 获取系统访问记录
         Long totalVisitCount = loginLogService.findTotalVisitCount();
         data.put("totalVisitCount", totalVisitCount);
@@ -66,7 +68,7 @@ public class UserController {
         List<Map<String, Object>> lastTenVisitCount = loginLogService.findLastTenDaysVisitCount(null);
         data.put("lastTenVisitCount", lastTenVisitCount);
         SystemUser param = new SystemUser();
-        param.setUsername(username);
+        param.setUsername(FebsUtil.getCurrentUsername());
         List<Map<String, Object>> lastTenUserVisitCount = loginLogService.findLastTenDaysVisitCount(param);
         data.put("lastTenUserVisitCount", lastTenUserVisitCount);
         return new FebsResponse().data(data);
@@ -76,7 +78,7 @@ public class UserController {
     @GetMapping
     @PreAuthorize("hasAuthority('user:view')")
     public FebsResponse userList(QueryRequest queryRequest, SystemUser user) {
-        Map<String, Object> dataTable = FebsUtil.getDataTable(userService.findUserDetail(user, queryRequest));
+        Map<String, Object> dataTable = FebsUtil.getDataTable(userService.findUserDetailList(user, queryRequest));
         return new FebsResponse().data(dataTable);
     }
 
@@ -99,6 +101,13 @@ public class UserController {
         this.userService.updateUser(user);
     }
 
+    @GetMapping("/{userId}")
+    @PreAuthorize("hasAuthority('user:update')")
+    public FebsResponse findUserDataPermissions(@NotBlank(message = "{required}") @PathVariable String userId) {
+        String dataPermissions = this.userDataPermissionService.findByUserId(userId);
+        return new FebsResponse().data(dataPermissions);
+    }
+
     @DeleteMapping("/{userIds}")
     @PreAuthorize("hasAuthority('user:delete')")
     @ControllerEndpoint(operation = "删除用户", exceptionMessage = "删除用户失败")
@@ -109,32 +118,27 @@ public class UserController {
 
     @PutMapping("profile")
     @ControllerEndpoint(exceptionMessage = "修改个人信息失败")
-    public void updateProfile(@Valid SystemUser user) {
+    public void updateProfile(@Valid SystemUser user) throws FebsException {
         this.userService.updateProfile(user);
     }
 
     @PutMapping("avatar")
     @ControllerEndpoint(exceptionMessage = "修改头像失败")
-    public void updateAvatar(
-            @NotBlank(message = "{required}") String username,
-            @NotBlank(message = "{required}") String avatar) {
-        this.userService.updateAvatar(username, avatar);
+    public void updateAvatar(@NotBlank(message = "{required}") String avatar) {
+        this.userService.updateAvatar(avatar);
     }
 
     @GetMapping("password/check")
-    public boolean checkPassword(
-            @NotBlank(message = "{required}") String username,
-            @NotBlank(message = "{required}") String password) {
-        SystemUser user = userService.findByName(username);
+    public boolean checkPassword(@NotBlank(message = "{required}") String password) {
+        String currentUsername = FebsUtil.getCurrentUsername();
+        SystemUser user = userService.findByName(currentUsername);
         return user != null && passwordEncoder.matches(password, user.getPassword());
     }
 
     @PutMapping("password")
     @ControllerEndpoint(exceptionMessage = "修改密码失败")
-    public void updatePassword(
-            @NotBlank(message = "{required}") String username,
-            @NotBlank(message = "{required}") String password) {
-        userService.updatePassword(username, password);
+    public void updatePassword(@NotBlank(message = "{required}") String password) {
+        userService.updatePassword(password);
     }
 
     @PutMapping("password/reset")
@@ -149,7 +153,7 @@ public class UserController {
     @PreAuthorize("hasAuthority('user:export')")
     @ControllerEndpoint(operation = "导出用户数据", exceptionMessage = "导出Excel失败")
     public void export(QueryRequest queryRequest, SystemUser user, HttpServletResponse response) {
-        List<SystemUser> users = this.userService.findUserDetail(user, queryRequest).getRecords();
+        List<SystemUser> users = this.userService.findUserDetailList(user, queryRequest).getRecords();
         ExcelKit.$Export(SystemUser.class, response).downXlsx(users, false);
     }
 }
